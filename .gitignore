@@ -5,6 +5,9 @@ node_modules
 out
 dist
 *.tgz
+/.next/
+/out/
+/build
 
 # code coverage
 coverage
@@ -26,6 +29,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .eslintcache
 .cache
 *.tsbuildinfo
+next-env.d.ts
 
 # IntelliJ based IDEs
 .idea
