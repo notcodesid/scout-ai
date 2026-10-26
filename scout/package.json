@@ -1,0 +1,23 @@
+{
+  "name": "scout",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "exa-js": "^2.25.0",
+    "openai": "^7.34.0",
+    "remove-markdown": "^0.8.0",
+    "spectrum-ts": "^12.10.1",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/bun": "latest"
+  }
+}

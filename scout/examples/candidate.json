@@ -1,0 +1,11 @@
+{
+  "profile": {
+    "name": "Sample Candidate",
+    "skills": ["TypeScript", "React", "Python"],
+    "experience": "Fictional demo profile: a beginner developer who has built small personal web projects. No professional achievements or employment history are claimed.",
+    "interests": "Developer tools and helping developers work with reliable research data.",
+    "constraints": "Seeking junior opportunities or a small contribution that can be validated in one day. Location and work authorization are not specified.",
+    "fictional": true
+  },
+  "companyURL": "https://exa.ai"
+}
