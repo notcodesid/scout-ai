@@ -24,6 +24,7 @@ export const INDIA_DOMAINS = [
   "economictimes.indiatimes.com",
   "livemint.com",
   "techcrunch.com",
+  "startuptalky.com",
 ];
 
 export const INDIA_QUERIES = [
