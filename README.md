@@ -9,7 +9,7 @@ Two things, deliberately:
 - **`app/`** — the thesis landing page. "How to get hired without playing the volume game." Next.js, run with `bun run dev`.
 - **`scout/`** — the product: an iMessage agent squad. Text Scout and it:
   1. **Interviews** you (learns skills, experience, constraints) — `scout/src/interview.ts`
-  2. **Discovers** companies worth approaching
+  2. **Discovers** companies worth approaching — the funding radar in `scout/src/radar/` finds Indian startups that just raised an early round (`cd scout && bun run radar`)
   3. **Researches** each one with sourced evidence — `scout/src/research/`
   4. **Reviews** every claim against its sources before it reaches you — `scout/src/research/reviewer.ts`
 

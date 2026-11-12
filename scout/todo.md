@@ -9,7 +9,7 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
 | # | Agent | Job | State |
 |---|-------|-----|-------|
 | 1 | Interview | Text conversation that builds the candidate profile | exists in `src/interview.ts` + `src/model.ts` (wired in `src/index.ts`) |
-| 2 | Discovery | Profile → candidate companies | not built |
+| 2 | Discovery | Profile → candidate companies | funding radar built in `src/radar/` (India, early rounds); job-board and hiring-post check is next |
 | 3 | Research | Per company: bounded evidence loop → sourced dossier | Phase 1 (port from `hackathon/scout`) |
 | 4 | Reviewer | Adversarial check of claims vs sources before anything reaches the user | Phase 1 (extract from research loop) |
 
@@ -42,6 +42,11 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
   - [ ] Interview agent on OpenRouter when key present, Ollama fallback
   - [ ] Live end-to-end test from a real phone: text → profile → URL → dossier texts back
 - [ ] **Phase 3 — discovery agent**
+  - [x] Funding radar (`bun run radar [--days 14] [--all]`): Exa news search over Indian startup outlets →
+        model extracts rounds → each kept only if its quote is verbatim in the article and names the
+        company → SQLite remembers what was surfaced, so reruns report only new companies.
+        Not yet run against live keys.
+  - [ ] Per funded company: check its job board (Greenhouse/Lever/Ashby) and founder "we're hiring" posts
   - [ ] Decide provider: CrustData if access survives the hackathon, else Exa search
   - [ ] Profile → 3–5 ranked candidates with one-line reasons → user picks
 - [ ] **Phase 4 — polish**

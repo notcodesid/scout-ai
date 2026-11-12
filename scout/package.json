@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun src/index.ts",
     "dev": "bun --watch src/index.ts",
+    "radar": "bun src/radar/cli.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },
