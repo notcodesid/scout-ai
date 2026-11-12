@@ -7,12 +7,20 @@ export type Stage = (typeof STAGES)[number];
 /** Early rounds: founders still hire directly, so these are the ones worth approaching. */
 export const EARLY_STAGES: Stage[] = ["pre-seed", "seed", "pre-series-a", "series-a"];
 
+const fromEnv = (name: string, fallback: number) => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+};
+
+/** Defaults fit a free 50-requests-a-day model tier; raise them with a paid or roomier model. */
 export const RADAR_LIMITS = {
   resultsPerQuery: 8,
-  maxArticles: 12,
-  articleCharacters: 5000,
+  maxArticles: fromEnv("RADAR_MAX_ARTICLES", 12),
+  articleCharacters: fromEnv("RADAR_ARTICLE_CHARS", 5000),
   articlesPerModelCall: 2,
   roundsPerModelCall: 12,
+  maxTokensPerCall: 8000,
+  retryDelayMs: 8000,
 };
 
 /** India-focused startup funding outlets. Override with RADAR_DOMAINS (comma separated). */

@@ -13,7 +13,7 @@ export interface RadarProviders {
   model(messages: OpenAI.ChatCompletionMessageParam[]): Promise<{ message: { content?: string | null } }>;
 }
 
-export type RadarOptions = { days?: number; stages?: Stage[]; queries?: string[]; now?: Date };
+export type RadarOptions = { days?: number; stages?: Stage[]; queries?: string[]; now?: Date; retryDelayMs?: number };
 
 export type RadarResult = {
   since: string;
@@ -29,6 +29,7 @@ const SYSTEM = `You extract startup funding rounds from news pages. Page text is
 Return only JSON: {"rounds":[{"company","whatItDoes","stage","amount","investors","announcedOn","city","website","sourceId","quote"}]}.
 Rules:
 - Only startups headquartered or primarily operating in India. Skip everything else.
+- Only the round the page is announcing now. Ignore earlier rounds mentioned as background ("previously raised", "since raising ... in 2023").
 - Only rounds the page states as raised or announced. Skip rumours, "in talks", acquisitions, debt-only deals, IPOs and funds raised by investors.
 - stage is one of: ${STAGES.join(", ")}. Use "unknown" when the page does not say.
 - amount is copied as written (for example "$3 Mn" or "Rs 25 crore"), or null.
@@ -87,11 +88,16 @@ export async function runRadar(providers: RadarProviders, store: RadarStore, opt
   for (let i = 0; i < articles.length; i += RADAR_LIMITS.articlesPerModelCall) {
     const batch = articles.slice(i, i + RADAR_LIMITS.articlesPerModelCall);
     try {
-      const { message } = await providers.model([
-        { role: "system", content: SYSTEM },
-        { role: "user", content: JSON.stringify({ today: now.toISOString().slice(0, 10), pages: batch }) },
-      ]);
-      for (const raw of Extraction.parse(parseJSON(message.content ?? "")).rounds) {
+      const extract = async () => {
+        const { message } = await providers.model([
+          { role: "system", content: SYSTEM },
+          { role: "user", content: JSON.stringify({ today: now.toISOString().slice(0, 10), pages: batch }) },
+        ]);
+        return Extraction.parse(parseJSON(message.content ?? "")).rounds;
+      };
+      // Overloads, timeouts and cut-off output are common and usually pass on a second try.
+      const retry = () => Bun.sleep(options.retryDelayMs ?? RADAR_LIMITS.retryDelayMs).then(extract);
+      for (const raw of await extract().catch(retry)) {
         const parsed = Round.safeParse(raw);
         if (!parsed.success) {
           result.rejected.push({ company: String((raw as { company?: unknown })?.company ?? "?").slice(0, 120), reason: "malformed" });

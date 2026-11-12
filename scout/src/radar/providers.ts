@@ -37,6 +37,7 @@ export function liveRadarProviders(): RadarProviders {
         }];
       });
     },
-    model: (messages) => model(messages),
+    // Reasoning models spend output tokens on thinking, so a list of rounds needs headroom.
+    model: (messages) => model(messages, undefined, false, "research", RADAR_LIMITS.maxTokensPerCall),
   };
 }

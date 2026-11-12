@@ -45,8 +45,9 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
   - [x] Funding radar (`bun run radar [--days 14] [--all]`): Exa news search over Indian startup outlets →
         model extracts rounds → each kept only if its quote is verbatim in the article and names the
         company → SQLite remembers what was surfaced, so reruns report only new companies.
-        Exa retrieval and quote verification run live (31 articles, 19 verified rounds);
-        the model extraction step has not run against OpenRouter yet.
+        Run live end to end (Exa + Gemini through its OpenAI-compatible endpoint):
+        31 articles, 12 verified rounds; remaining calls hit the Gemini free quota (429).
+        Raise coverage with RADAR_MAX_ARTICLES / RADAR_ARTICLE_CHARS.
   - [ ] Per funded company: check its job board (Greenhouse/Lever/Ashby) and founder "we're hiring" posts
   - [ ] Decide provider: CrustData if access survives the hackathon, else Exa search
   - [ ] Profile → 3–5 ranked candidates with one-line reasons → user picks

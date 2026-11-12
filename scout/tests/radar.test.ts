@@ -30,7 +30,7 @@ function providers(rounds: unknown[], articles: Article[] = [article]): RadarPro
 
 test("keeps a round whose quote is verbatim in the article and dedupes articles across queries", async () => {
   const p = providers([kiln]);
-  const result = await runRadar(p, new RadarStore(":memory:"), { now });
+  const result = await runRadar(p, new RadarStore(":memory:"), { now, retryDelayMs: 0 });
   expect(result.articles).toBe(1);
   expect(p.modelCalls).toBe(1);
   expect(result.fresh.map((c) => c.company)).toEqual(["Kiln Labs"]);
@@ -47,7 +47,7 @@ test("rejects invented companies, fabricated quotes, late stages and stale round
       { company: "" },
     ]),
     new RadarStore(":memory:"),
-    { now },
+    { now, retryDelayMs: 0 },
   );
   expect(result.companies).toEqual([]);
   expect(result.rejected.map((r) => r.reason)).toEqual([
@@ -57,8 +57,8 @@ test("rejects invented companies, fabricated quotes, late stages and stale round
 
 test("a rerun reports only companies it has not surfaced before", async () => {
   const store = new RadarStore(":memory:");
-  expect((await runRadar(providers([kiln]), store, { now })).fresh).toHaveLength(1);
-  const again = await runRadar(providers([{ ...kiln, company: "Kiln Labs Pvt Ltd" }]), store, { now });
+  expect((await runRadar(providers([kiln]), store, { now, retryDelayMs: 0 })).fresh).toHaveLength(1);
+  const again = await runRadar(providers([{ ...kiln, company: "Kiln Labs Pvt Ltd" }]), store, { now, retryDelayMs: 0 });
   expect(again.companies).toHaveLength(1);
   expect(again.fresh).toEqual([]);
   expect(store.all()).toHaveLength(1);
@@ -71,13 +71,24 @@ test("a failing query or unreadable model output is reported, not fatal", async 
     if (calls++ === 0) throw new Error("EXA_DOWN");
     return [article];
   };
-  const ok = await runRadar(p, new RadarStore(":memory:"), { now });
+  const ok = await runRadar(p, new RadarStore(":memory:"), { now, retryDelayMs: 0 });
   expect(ok.failures).toHaveLength(1);
   expect(ok.fresh).toHaveLength(1);
 
+  const flaky = providers([kiln]);
+  const good = flaky.model.bind(flaky);
+  let attempts = 0;
+  flaky.model = async () => {
+    if (attempts++ === 0) throw new Error("503 overloaded");
+    return good();
+  };
+  const retried = await runRadar(flaky, new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  expect(retried.failures).toEqual([]);
+  expect(retried.fresh).toHaveLength(1);
+
   const bad = providers([]);
   bad.model = async () => ({ message: { content: "not json" } });
-  const result = await runRadar(bad, new RadarStore(":memory:"), { now });
+  const result = await runRadar(bad, new RadarStore(":memory:"), { now, retryDelayMs: 0 });
   expect(result.companies).toEqual([]);
   expect(result.failures[0]).toStartWith("extract ");
 });
