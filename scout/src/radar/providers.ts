@@ -1,7 +1,8 @@
 import Exa from "exa-js";
+import OpenAI from "openai";
 import { createHash } from "node:crypto";
 import { publicURL } from "../research/contracts.ts";
-import { liveProviders } from "../research/providers.ts";
+import { DEFAULT_MODELS } from "../research/providers.ts";
 import { INDIA_DOMAINS, RADAR_LIMITS, type Article } from "./contracts.ts";
 import type { RadarProviders } from "./radar.ts";
 
@@ -11,7 +12,17 @@ export function liveRadarProviders(): RadarProviders {
   }
   const exa = new Exa(process.env.EXA_API_KEY);
   const domains = process.env.RADAR_DOMAINS?.split(",").map((d) => d.trim()).filter(Boolean) ?? INDIA_DOMAINS;
-  const { model } = liveProviders();
+  // The radar's own client: a long roundup can take over a minute to extract,
+  // longer than the research client's timeout allows.
+  const client = new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    maxRetries: 0,
+    timeout: RADAR_LIMITS.modelTimeoutMs,
+    defaultHeaders: { "X-Title": "scout" },
+  });
+  const effort = process.env.RADAR_REASONING_EFFORT?.trim();
+  let lastCall = 0;
   return {
     async news(query, since) {
       const response = await exa.search(query, {
@@ -19,7 +30,8 @@ export function liveRadarProviders(): RadarProviders {
         startPublishedDate: since.toISOString(),
         numResults: RADAR_LIMITS.resultsPerQuery,
         ...(domains.length ? { includeDomains: domains } : {}),
-        contents: { text: { maxCharacters: RADAR_LIMITS.articleCharacters } },
+        // Enough for a roundup; runRadar trims single stories to their shorter limit.
+        contents: { text: { maxCharacters: Math.max(RADAR_LIMITS.articleCharacters, RADAR_LIMITS.roundupCharacters) } },
       });
       return response.results.flatMap((r): Article[] => {
         let url: string;
@@ -37,7 +49,23 @@ export function liveRadarProviders(): RadarProviders {
         }];
       });
     },
-    // Reasoning models spend output tokens on thinking, so a list of rounds needs headroom.
-    model: (messages) => model(messages, undefined, false, "research", RADAR_LIMITS.maxTokensPerCall),
+    async model(messages) {
+      // Free tiers allow only a few requests a minute, so calls are spaced out.
+      const wait = lastCall + RADAR_LIMITS.callGapMs - Date.now();
+      if (wait > 0) await Bun.sleep(wait);
+      lastCall = Date.now();
+      const response = await client.chat.completions.create({
+        model: process.env.RESEARCH_MODEL || DEFAULT_MODELS.research,
+        messages,
+        // Reasoning models spend output tokens on thinking, so a list of rounds needs headroom.
+        max_tokens: RADAR_LIMITS.maxTokensPerCall,
+        response_format: { type: "json_object" },
+        ...(effort ? { reasoning_effort: effort as OpenAI.ReasoningEffort } : {}),
+      });
+      if (response.choices[0]?.finish_reason === "length") throw new Error("MODEL_OUTPUT_TRUNCATED");
+      const message = response.choices[0]?.message;
+      if (!message) throw new Error("MODEL_EMPTY_RESPONSE");
+      return { message };
+    },
   };
 }
