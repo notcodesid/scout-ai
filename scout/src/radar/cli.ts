@@ -41,6 +41,9 @@ if (flag("--all")) {
   console.log(`${result.companies.length} verified rounds, ${result.fresh.length} new` +
     `${sectors.length ? ` in ${sectors.join(", ")} (${result.outsideSectors} new in other sectors stored, not shown)` : ""}, ${result.rejected.length} rejected.\n`);
   for (const company of result.fresh) console.log(line(company) + "\n");
+  const updated = result.updated.filter(wanted);
+  if (updated.length) console.log(`${updated.length} known companies gained detail:\n`);
+  for (const company of updated) console.log(line(company) + "\n");
   for (const failure of result.failures) console.error(`failed: ${failure}`);
   console.log(`Full result: ${latest}`);
 }

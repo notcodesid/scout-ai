@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { unlinkSync } from "node:fs";
 import { RadarStore, dedupeStories, runRadar, storySubject, type RadarProviders } from "../src/radar/radar.ts";
-import { RADAR_LIMITS, Round, amountUsdMn, companyKey, isRoundup, rejectRound, type Article } from "../src/radar/contracts.ts";
+import { RADAR_LIMITS, Round, amountUsdMn, companyKey, isRoundup, mergeCompanies, rejectRound, statedDate, type Article, type FundedCompany } from "../src/radar/contracts.ts";
 
 const now = new Date("2026-11-12T00:00:00Z");
 const article: Article = {
@@ -40,6 +40,7 @@ test("keeps a round whose quote is verbatim in the article and dedupes articles 
 });
 
 test("rejects invented companies, fabricated quotes, late stages and stale rounds", async () => {
+  const dated: Article = { ...article, text: article.text + " The round was announced on 1 September 2026." };
   const result = await runRadar(
     providers([
       { ...kiln, company: "Fakeco" },
@@ -47,13 +48,13 @@ test("rejects invented companies, fabricated quotes, late stages and stale round
       { ...kiln, company: "Bigco", stage: "later", quote: "Bigco closed a $200 Mn Series E round" },
       { ...kiln, announcedOn: "2026-09-01" },
       { company: "" },
-    ]),
+    ], [dated]),
     new RadarStore(":memory:"),
     { now, retryDelayMs: 0 },
   );
   expect(result.companies).toEqual([]);
   expect(result.rejected.map((r) => r.reason)).toEqual([
-    "company not named in quote", "quote not in source", "stage later not wanted", "older than window", "malformed",
+    "company not named in quote", "quote not in source", "stage later not wanted", "older than window", "malformed (company, quote)",
   ]);
 });
 
@@ -217,26 +218,196 @@ test("six outlets covering one round cost one article, the richest", () => {
   expect(isRoundup({ title: "altM raises $10.3M Series A" })).toBe(false);
 });
 
-test("a roundup that names the company replaces single stories about it, before any model call", async () => {
+test("a roundup does not replace the single story: both are read, twins of the story are not", async () => {
   const story = single("k-1", "Kiln Labs raises $2 Mn seed round", "Kiln Labs raised $2 Mn in a seed round led by Fixture Ventures. More detail.");
   const twin = single("k-2", "Potter tools startup Kiln Labs bags $2 Mn", "Kiln Labs raised $2 Mn.");
   const store = new RadarStore(":memory:");
-  const p = providers([kiln], [story, twin, article]);
+  const p = providers([kiln, { ...kiln, sourceId: "k-1" }], [story, twin, article]);
   const result = await runRadar(p, store, { now, retryDelayMs: 0 });
-  expect(p.modelCalls).toBe(1);
-  expect(result).toMatchObject({ articles: 1, articlesDuplicate: 2 });
-  expect(result.fresh[0]!.sourceUrl).toBe(article.url);
-  // The roundup yielded Kiln Labs, so its duplicates are done too.
-  expect([story, twin].every((a) => store.processed(a.url))).toBe(true);
+  // One call for the roundup, one for the richest single story; the thinner twin costs nothing.
+  expect(p.modelCalls).toBe(2);
+  expect(result).toMatchObject({ articles: 2, articlesDuplicate: 1, duplicates: [{ url: twin.url, coveredBy: story.url }] });
+  expect(result.companies).toHaveLength(1);
+  // Both state the stage, so the single story is the source.
+  expect(result.fresh[0]!.sourceUrl).toBe(story.url);
+  expect([story, twin, article].every((a) => store.processed(a.url))).toBe(true);
 
-  // If the roundup's extraction does not yield the company, the single story is read next run.
+  // A twin is marked done only with the story that stands for it: a failed call leaves both for the next run.
   const store2 = new RadarStore(":memory:");
-  await runRadar(providers([], [story, article]), store2, { now, retryDelayMs: 0 });
-  expect(store2.processed(article.url)).toBe(true);
-  expect(store2.processed(story.url)).toBe(false);
-  const next = await runRadar(providers([{ ...kiln, sourceId: "k-1" }], [story, article]), store2, { now, retryDelayMs: 0 });
-  expect(next).toMatchObject({ articles: 1, articlesSkipped: 1 });
-  expect(next.fresh.map((c) => c.sourceUrl)).toEqual([story.url]);
+  const bad = providers([], [story, twin]);
+  bad.model = async () => ({ message: { content: "not json" } });
+  await runRadar(bad, store2, { now, retryDelayMs: 0 });
+  expect([story, twin].some((a) => store2.processed(a.url))).toBe(false);
+});
+
+// --- 2b. detail wins over brevity: merging ---
+
+const altmRoundup: Article = {
+  id: "r-1", url: "https://news.example.com/weekly", title: "Funding Galore: Indian startups raised $180 Mn this week", publishedDate: "2026-11-08T00:00:00.000Z",
+  text: "altM raised $10.3 Mn from Fixture Ventures. Clinics On Cloud bagged $12.5 Mn from Tiger Angels. Kiln Labs raised $2 Mn in a seed round led by Fixture Ventures.",
+};
+const altmStory = single("s-altm", "Biomaterials startup altM raises $10.3 Mn in Series A",
+  "Bengaluru-based altM has raised $10.3 million in a Series A round led by Fixture Ventures. Founded by Yugal Raj Jain, Apoorv Garg and Harshad Velankar, altM (altm.bio) turns crop waste into biomaterials.");
+const altmThin = { ...kiln, company: "altM", whatItDoes: null, stage: "unknown", sector: "other", city: null, quote: "altM raised $10.3 Mn from Fixture Ventures", amount: "$10.3 Mn", sourceId: "r-1" };
+const altmRich = {
+  ...kiln, company: "altM", whatItDoes: "Turns crop waste into biomaterials", stage: "Series A", sector: "climate-energy", amount: "$10.3 million",
+  founders: ["Yugal Raj Jain", "Apoorv Garg", "Harshad Velankar"], website: "altm.bio", city: "Bengaluru",
+  quote: "altM has raised $10.3 million in a Series A round led by Fixture Ventures", sourceId: "s-altm",
+};
+/** Answers each model call with the rounds whose page is in that call. */
+const byPage = (rounds: { sourceId: string }[], articles: Article[]) => {
+  const p = providers([], articles);
+  p.model = async function (messages) {
+    p.modelCalls++;
+    const ids = (JSON.parse(messages[1]!.content as string).pages as Article[]).map((a) => a.id);
+    return { message: { content: JSON.stringify({ rounds: rounds.filter((r) => ids.includes(r.sourceId)) }) } };
+  };
+  return p;
+};
+
+test("altM: a roundup without a stage plus a single story with Series A and founders is one full company", async () => {
+  const p = byPage([altmThin, altmRich], [altmStory, altmRoundup]);
+  const result = await runRadar(p, new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  expect(p.modelCalls).toBe(2);
+  expect(result).toMatchObject({ articles: 2, articlesDuplicate: 0, rejected: [] });
+  expect(result.fresh).toHaveLength(1);
+  expect(result.fresh[0]).toMatchObject({
+    company: "altM", stage: "series-a", sector: "climate-energy", founders: ["Yugal Raj Jain", "Apoorv Garg", "Harshad Velankar"],
+    website: "altm.bio", city: "Bengaluru", whatItDoes: "Turns crop waste into biomaterials",
+    // The quote and source are the page that states the stage.
+    quote: altmRich.quote, sourceUrl: altmStory.url,
+  });
+});
+
+test("six outlets plus a roundup cost two model calls and still yield the stage (Clinics On Cloud)", async () => {
+  const outlets = ["Clinics On Cloud raises $12.5 Mn", "Healthtech Clinics On Cloud bags $12.5 million in Series A", "Clinics On Cloud secures Rs 105 crore"]
+    .map((title, i) => single(`c-${i}`, title, "Clinics On Cloud raised $12.5 million in a Series A round led by Tiger Angels. Founded by Abhay Agarwal. ".repeat(i === 1 ? 3 : 1)));
+  const rounds = [
+    { ...altmThin, company: "Clinics On Cloud", quote: "Clinics On Cloud bagged $12.5 Mn from Tiger Angels", amount: "$12.5 Mn" },
+    { ...altmThin, company: "Clinics On Cloud", sector: "healthcare-biotech", founders: ["Abhay Agarwal"], quote: "Clinics On Cloud raised $12.5 million in a Series A round led by Tiger Angels", sourceId: "c-1" },
+  ];
+  const p = byPage(rounds, [...outlets, altmRoundup]);
+  const store = new RadarStore(":memory:");
+  const result = await runRadar(p, store, { now, retryDelayMs: 0 });
+  expect(p.modelCalls).toBe(2);
+  expect(result).toMatchObject({ articles: 2, articlesDuplicate: 2 });
+  expect(result.fresh.map((c) => [c.company, c.stage, c.sector, c.founders, c.sourceUrl]))
+    .toEqual([["Clinics On Cloud", "series-a", "healthcare-biotech", ["Abhay Agarwal"], outlets[1]!.url]]);
+  expect(outlets.every((a) => store.processed(a.url))).toBe(true);
+});
+
+test("merging keeps the fuller value of every field", () => {
+  const base: FundedCompany = {
+    company: "Kiln Labs", key: "kiln", whatItDoes: null, stage: "unknown", amount: null, investors: [], founders: ["Asha Rao"], sector: "other",
+    announcedOn: null, city: null, website: null, quote: "Kiln Labs raised $2 Mn from Fixture Ventures", sourceUrl: "https://a.example.com/weekly", sourceTitle: "Weekly funding roundup", publishedDate: null,
+  };
+  const rich: FundedCompany = {
+    ...base, stage: "seed", amount: "$2 Mn", investors: ["Fixture Ventures"], founders: ["Asha Rao", "Vikram Sethi"], sector: "consumer-brand", city: "Bengaluru", website: "kilnlabs.in",
+    announcedOn: "2026-11-05", quote: "Kiln Labs raised $2 Mn in a seed round", sourceUrl: "https://b.example.com/kiln", sourceTitle: "Kiln Labs raises $2 Mn",
+  };
+  // The order the pages were read in does not matter.
+  expect(mergeCompanies(base, rich)).toEqual(rich);
+  expect(mergeCompanies(rich, base)).toEqual(rich);
+  // A stated stage wins the quote and source even from a roundup; the other page still fills the gaps.
+  const statedRoundup = { ...base, stage: "seed" as const, quote: "Kiln Labs | Seed | $2 Mn" };
+  const vagueStory = { ...rich, stage: "unknown" as const };
+  expect(mergeCompanies(vagueStory, statedRoundup)).toMatchObject({
+    stage: "seed", quote: statedRoundup.quote, sourceUrl: base.sourceUrl, founders: ["Asha Rao", "Vikram Sethi"], sector: "consumer-brand", website: "kilnlabs.in", amount: "$2 Mn", city: "Bengaluru",
+  });
+  // Nothing better to add: unchanged.
+  expect(mergeCompanies(rich, { ...base, sector: "fintech", founders: [] })).toEqual(rich);
+});
+
+test("a thin stored company gains facts on a later run without being reported as new", async () => {
+  const store = new RadarStore(":memory:");
+  const first = await runRadar(byPage([altmThin], [altmRoundup]), store, { now, retryDelayMs: 0 });
+  expect(first.fresh.map((c) => [c.company, c.stage, c.sector, c.founders])).toEqual([["altM", "unknown", "other", []]]);
+  const firstSeen = store.all()[0]!.firstSeen;
+
+  const later = new Date(now.getTime() + 86_400_000);
+  const second = await runRadar(byPage([altmRich], [altmRoundup, altmStory]), store, { now: later, retryDelayMs: 0 });
+  expect(second).toMatchObject({ articles: 1, articlesSkipped: 1, fresh: [] });
+  expect(second.updated.map((c) => c.company)).toEqual(["altM"]);
+  expect(store.all()).toHaveLength(1);
+  expect(store.all()[0]).toMatchObject({
+    stage: "series-a", sector: "climate-energy", founders: ["Yugal Raj Jain", "Apoorv Garg", "Harshad Velankar"], website: "altm.bio", sourceUrl: altmStory.url, firstSeen,
+  });
+
+  // Seeing it a third time with nothing better changes nothing.
+  const third = await runRadar(byPage([{ ...altmThin, sourceId: "r-2" }], [{ ...altmRoundup, id: "r-2", url: "https://other.example.com/weekly" }]), store, { now: later, retryDelayMs: 0 });
+  expect(third).toMatchObject({ fresh: [], updated: [] });
+  expect(store.all()[0]).toMatchObject({ stage: "series-a", sourceUrl: altmStory.url });
+});
+
+test("hard checks still hold when a roundup and a single story are merged", async () => {
+  const roundup: Article = {
+    ...altmRoundup,
+    text: "Peptris raised Rs 70 crore from Speciale Invest. Peppermint Robotics raised Rs 100 crore from pi Ventures. Megaco raised $40 Mn from Tiger. Oolka raised $14 million in a round led by Accel.",
+  };
+  const feature = single("f-pep", "How Peptris is using AI to discover new drugs",
+    "Backed by Speciale Invest and IAN Alpha Fund with ₹70 crore Series A funding, Peptris is now building its own pipeline. Founded by Narayanan Venkatasubramanian.");
+  const trend = single("f-trend", "India's consumer AI startups face a retention test", "Credit app Oolka raised $14 million in a seed round led by Accel. Investors worry.");
+  const pepper = single("s-pep", "Peppermint Robotics raises Rs 100 crore in Series B", "Peppermint Robotics raised Rs 100 crore in its Series B round led by pi Ventures.");
+  const mega = single("s-mega", "Megaco raises $40 Mn", "Megaco raised $40 Mn from Tiger to expand. Founded by Ravi Rao.");
+  const r = (company: string, stage: string, quote: string, sourceId: string, extra = {}) => ({ ...kiln, company, stage, amount: null, sector: "other", quote, sourceId, ...extra });
+  const rounds = [
+    r("Peptris", "unknown", "Peptris raised Rs 70 crore from Speciale Invest", "r-1"),
+    r("Peppermint Robotics", "unknown", "Peppermint Robotics raised Rs 100 crore from pi Ventures", "r-1"),
+    r("Megaco", "unknown", "Megaco raised $40 Mn from Tiger", "r-1"),
+    r("Oolka", "unknown", "Oolka raised $14 million in a round led by Accel", "r-1"),
+    r("Peptris", "series-a", "Backed by Speciale Invest and IAN Alpha Fund with ₹70 crore Series A funding, Peptris is now building its own pipeline", "f-pep", { founders: ["Narayanan Venkatasubramanian"] }),
+    r("Oolka", "seed", "Credit app Oolka raised $14 million in a seed round led by Accel", "f-trend", { sector: "fintech" }),
+    r("Peppermint Robotics", "series-b", "Peppermint Robotics raised Rs 100 crore in its Series B round led by pi Ventures", "s-pep"),
+    r("Megaco", "unknown", "Megaco raised $40 Mn from Tiger to expand", "s-mega", { founders: ["Ravi Rao"] }),
+  ];
+  const result = await runRadar(byPage(rounds, [roundup, feature, trend, pepper, mega]), new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  // The rejected feature and trend pages add nothing to the roundup's rows: no stage, founders or sector leak in.
+  expect(result.companies.map((c) => [c.company, c.stage, c.sector, c.founders, c.sourceUrl])).toEqual([
+    ["Peptris", "unknown", "other", [], roundup.url],
+    ["Oolka", "unknown", "other", [], roundup.url],
+  ]);
+  expect(result.rejected).toEqual([
+    { company: "Megaco", reason: "stage unknown and amount too large (about $40M)" },
+    { company: "Peptris", reason: "background mention, not a new round" },
+    { company: "Oolka", reason: "company not named in headline" },
+    { company: "Peppermint Robotics", reason: "stage series-b not wanted" },
+    { company: "Megaco", reason: "stage unknown and amount too large (about $40M)" },
+    { company: "Peppermint Robotics", reason: "stage series-b not wanted (stated on another page)" },
+  ]);
+});
+
+test("a bare list answer and a missing sourceId on a one-page call are accepted; malformed rounds say which field", async () => {
+  const { sourceId: _sourceId, ...noSource } = kiln;
+  const p = providers([]);
+  p.model = async () => ({ message: { content: JSON.stringify([noSource, { ...kiln, company: "Longco", quote: "x".repeat(401) }]) } });
+  const result = await runRadar(p, new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  expect(result).toMatchObject({ articlesFailed: 0, failures: [], rejected: [{ company: "Longco", reason: "malformed (quote)" }] });
+  expect(result.fresh.map((c) => c.company)).toEqual(["Kiln Labs"]);
+  // With several pages in the call, a round that names no page cannot be placed.
+  const two = providers([noSource], [single("t-1", "Kiln Labs raises $2 Mn", article.text), single("t-2", "Zed raises $1 Mn", "Zed raised $1 Mn.")]);
+  expect((await runRadar(two, new RadarStore(":memory:"), { now, retryDelayMs: 0 })).rejected).toEqual([{ company: "Kiln Labs", reason: "malformed (sourceId)" }]);
+});
+
+// --- 2c. announcedOn ---
+
+test("a model-given date counts only when the page writes it", async () => {
+  const page = "Kiln Labs raised $2 Mn. Announced on 5 Nov 2026. Earlier: November 3, 2026; 02 Nov'26; 2026-11-01; 4th of November, 2026; 06/11/2026; Oct. 30, 2026.";
+  for (const iso of ["2026-11-05", "2026-11-03", "2026-11-02", "2026-11-01", "2026-11-04", "2026-11-06", "2026-10-30"]) expect([iso, statedDate(iso, page)]).toEqual([iso, iso]);
+  expect(statedDate("November 5, 2026", page)).toBe("2026-11-05");
+  // Not on the page: the publish date, a neighbouring day, the right day in another year or month, "15 Nov" matching "5 Nov".
+  for (const guess of ["2026-11-08", "2026-11-07", "2025-11-05", "2026-12-05", "2026-11-15", "not a date", "", null]) expect([guess, statedDate(guess, page)]).toEqual([guess, null]);
+  expect(statedDate("2026-11-05", "Raised on 15 Nov 2026, or 5 Nov 2025, or 5 November.")).toBeNull();
+
+  const dated: Article = { ...article, text: article.text + " The round was announced on 5 Nov 2026." };
+  const stated = await runRadar(providers([{ ...kiln, announcedOn: "2026-11-05" }], [dated]), new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  expect(stated.fresh[0]!.announcedOn).toBe("2026-11-05");
+  // A guessed date (here the publish date) is dropped, and the publish date decides the window as before.
+  const guessed = await runRadar(providers([{ ...kiln, announcedOn: "2026-11-08" }]), new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  expect(guessed.fresh[0]).toMatchObject({ announcedOn: null, publishedDate: article.publishedDate });
+  // A guessed old date no longer rejects a fresh article, and a guessed fresh date does not rescue a stale one.
+  expect((await runRadar(providers([{ ...kiln, announcedOn: "2026-09-01" }]), new RadarStore(":memory:"), { now, retryDelayMs: 0 })).fresh).toHaveLength(1);
+  const stale = await runRadar(providers([{ ...kiln, announcedOn: "2026-11-10" }], [{ ...article, publishedDate: "2026-09-01T00:00:00.000Z" }]), new RadarStore(":memory:"), { now, retryDelayMs: 0 });
+  expect(stale.rejected.map((x) => x.reason)).toEqual(["older than window"]);
 });
 
 // --- 3. founders, website, sector ---
@@ -391,6 +562,8 @@ test("later rounds the model labels loosely or as unknown are not kept as small 
   expect(Round.parse({ ...kiln, stage: "Series A1" }).stage).toBe("series-a");
   expect(Round.parse({ ...kiln, stage: "bridge" }).stage).toBe("unknown");
   expect(Round.parse({ ...kiln, stage: null }).stage).toBe("unknown");
+  const { stage: _stage, ...noStage } = kiln;
+  expect(Round.parse(noStage).stage).toBe("unknown");
 
   const page: Article = {
     ...article,
@@ -415,11 +588,12 @@ test("later rounds the model labels loosely or as unknown are not kept as small 
   ]);
 });
 
-test("a roundup's 'per cent' does not stand in for a company called Cent", () => {
+test("a roundup never drops a single story", () => {
   const roundup: Article = { ...article, text: "Funding rose 12 per cent this week. Kiln Labs raised $2 Mn." };
   const cent = single("c-1", "Cent raises $15 million Series A", "Cent raised $15 million.");
   const kilnStory = single("c-2", "Kiln Labs raises $2 Mn", "Kiln Labs raised $2 Mn.");
-  expect(dedupeStories([cent, kilnStory, roundup]).kept.map((a) => a.id)).toEqual(["a-1", "c-1"]);
+  // Single stories are kept beside a roundup either way, so the roundup's text is never searched for names.
+  expect(dedupeStories([cent, kilnStory, roundup]).kept.map((a) => a.id)).toEqual(["a-1", "c-1", "c-2"]);
 });
 
 test("a per-minute rate limit is retried once and the run carries on", async () => {

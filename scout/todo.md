@@ -9,7 +9,7 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
 | # | Agent | Job | State |
 |---|-------|-----|-------|
 | 1 | Interview | Text conversation that builds the candidate profile | exists in `src/interview.ts` + `src/model.ts` (wired in `src/index.ts`) |
-| 2 | Discovery | Profile → candidate companies | funding radar built in `src/radar/` (India, early rounds); job-board and hiring-post check is next |
+| 2 | Discovery | Funded startups → who is hiring → who to write to | built as CLIs: `src/radar/`, `src/hiring/`, tied together by `bun run daily` (`src/daily/`); the stored digest is texted back on "jobs" / "radar" / "digest" / "who's hiring" |
 | 3 | Research | Per company: bounded evidence loop → sourced dossier | Phase 1 (port from `hackathon/scout`) |
 | 4 | Reviewer | Adversarial check of claims vs sources before anything reaches the user | Phase 1 (extract from research loop) |
 
@@ -35,31 +35,54 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
   - [x] `src/runs.ts`: run store + event log + SQLite step journal (`bun:sqlite`)
   - [x] Port `tests-node/agent.test.ts` to `bun test`, including a real restart-resume test on a file DB
   - [x] `bun test` + `tsc --noEmit` green; old app still compiles (also fixed a pre-existing type error in `interview.ts:83`)
-- [ ] **Phase 2 — iMessage wiring** (next)
+- [ ] **Phase 2 — iMessage wiring** (partly done)
+  - [x] Digest on demand: texting exactly `radar`, `jobs`, `digest` or `who's hiring` returns the stored daily digest
+        as a few short plain-text messages (`src/daily/command.ts`, called from `src/index.ts`). It reads the stores
+        only: no search, no model, no pipeline run from the message loop. Other texts go to the interview unchanged.
+        Unit-tested; NOT verified on a real phone (no Spectrum credentials in the build sandbox).
   - [ ] Router in `src/index.ts`: talking → locked → choosing companies → researching
   - [ ] Background worker loop picks queued runs; texts progress and results per company
   - [ ] Dossier → iMessage digest formatter; async ack ("on it, ~N min")
   - [ ] Interview agent on OpenRouter when key present, Ollama fallback
   - [ ] Live end-to-end test from a real phone: text → profile → URL → dossier texts back
-- [ ] **Phase 3 — discovery agent**
-  - [x] Funding radar (`bun run radar [--days 14] [--all]`): Exa news search over Indian startup outlets →
-        model extracts rounds → each kept only if its quote is verbatim in the article and names the
-        company → SQLite remembers what was surfaced, so reruns report only new companies.
-        Run live end to end (Exa + Gemini through its OpenAI-compatible endpoint):
-        31 articles, 12 verified rounds; remaining calls hit the Gemini free quota (429).
-        Raise coverage with RADAR_MAX_ARTICLES / RADAR_ARTICLE_CHARS.
-  - [x] Hiring check (`bun run hiring [--days 30] [--limit 20] [--company "Name"] [--all]`), no model calls:
-        per radar company, Exa finds the website, careers page and third-party listings; public
-        Greenhouse/Lever/Ashby JSON is read when the site links a board (or the domain label matches
-        one with roles); Exa LinkedIn/X search collects hiring posts that name the company inside the
-        window. Run live on 20 companies: 13 sites with hiring evidence, none on those three boards.
-  - [x] Contact finder (`bun run contacts [--limit 20] [--company "Name"] [--all]`), no model calls:
-        reads each company's hiring posts, careers page and site for published addresses (kept with
-        the page and surrounding words), names the people who posted, and offers clearly labelled
-        unverified guesses for affiliated posters. Run live on 12 companies.
-  - [ ] Guessed addresses are not verified (needs a verifier such as Hunter); post likes are not collected
-  - [ ] Decide provider: CrustData if access survives the hackathon, else Exa search
-  - [ ] Profile → 3–5 ranked candidates with one-line reasons → user picks
+- [ ] **Phase 3 — discovery agent** (the daily job-hunt loop works from the command line)
+  - [x] Funding radar (`bun run radar [--days 14] [--sectors a,b] [--all]`): Exa news search over Indian startup
+        outlets → model extracts rounds → each kept only if its quote is verbatim in the article, names the company
+        and states the raise as that page's news → SQLite remembers companies and read articles, so reruns do only
+        new work. Verified live (Exa + Gemini through its OpenAI-compatible endpoint): 20 companies stored.
+  - [x] Hiring check (`bun run hiring [--days 30] [--fresh-days 2] [--fresh] [--limit 20] [--company "Name"] [--no-read] [--why] [--all]`),
+        no model calls: website, careers page and its role titles, public Greenhouse/Lever/Ashby JSON when linked,
+        links to other boards, LinkedIn/X hiring posts with poster, role, freshness and reaction counts.
+        Verified live on 20 companies: 12 with hiring evidence, none on those three boards.
+  - [x] Contact finder (`bun run contacts [--limit 20] [--company "Name"] [--guesses] [--verify] [--all]`), no model
+        calls: published addresses with page and surrounding words, the people who posted, a mail-server check, and
+        one recommended address with its reason. Verified live on 12 companies.
+  - [x] Daily pipeline (`bun run daily`, flags in `README.md`): radar → hiring (only companies new or not checked in
+        the last 20h) → contacts (only companies with hiring evidence newer than their last lookup) → one digest,
+        saved to `.data/daily-latest.txt` / `.json`. Stages are isolated; a failed lookup never overwrites stored
+        evidence. Verified live with `--skip-radar` (hiring + contacts stages, 41 Exa requests over two runs).
+        NOT verified live: the radar stage inside the pipeline (model quota was in use; it calls the same `runRadar`
+        the standalone command uses, and its failure path is unit-tested).
+  - [x] Fit ranking (`src/daily/fit.ts`), deterministic: sectors + role keywords + cities + work mode, from flags,
+        `SCOUT_*` settings or a single locked interview profile. The digest names every company the filter left out.
+  - [ ] Scheduling: documented (cron line in `README.md`), not installed anywhere. Needs an always-on machine; a
+        cloud sandbox loses `.data/` between sessions.
+  - [ ] Hunter: Email Finder and Verifier are implemented and unit-tested, never run against the live service.
+  - [ ] Profile → 3–5 ranked candidates with one-line reasons → user picks → research run (joins Phase 2)
+
+### Known limits of the discovery loop
+
+- Radar needs a model. A default run makes about 12–15 model calls; Gemini's free tier allows about 20 requests a day
+  per model, so one run a day fits. When the quota is spent the radar stage fails and the rest of `daily` carries on.
+- Exa dates posts by day, not hour, so "fresh" defaults to 2 days.
+- LinkedIn reaction counts come from the post text Exa returns; when absent the digest says "likes unknown".
+  Hiring checks stored before roles and reactions were collected show "role not stated; likes unknown" until rechecked.
+- None of about 20 Indian startups checked used Greenhouse, Lever or Ashby; roles come from posts and careers pages.
+- Guessed addresses are off by default (`--guesses`), and unverified without `HUNTER_API_KEY`.
+- Companies stored by the first radar runs have no sector or founders, so they read as sector `other` and a sector
+  filter leaves them out (the digest names them). They are not re-extracted: their articles are marked as read.
+- Fit is keyword matching, not judgement: "engineer" matches any engineering title; a post that states no role is kept.
+- The iMessage digest is rebuilt from the stores on each request, so it reflects the last `bun run daily`, not today's web.
 - [ ] **Phase 4 — polish**
   - [ ] Per-run cost recording from OpenRouter usage; display in digest
   - [ ] Cancellation from iMessage ("stop" command)
@@ -67,7 +90,10 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
 
 ## Ops notes
 
-- Keys live in `scout/.env` (never read or committed): `PROJECT_ID`, `PROJECT_SECRET` (Spectrum),
-  `OPENROUTER_API_KEY`, `EXA_API_KEY`. Optional: `INTERVIEW_MODEL`, `RESEARCH_MODEL`,
-  `REVIEWER_MODEL`, `OLLAMA_BASE_URL`, `SCOUT_MODEL`.
-- Runtime: `bun start` (Spectrum app), `bun test`, `bunx tsc --noEmit`.
+- Keys live in `scout/.env` (never read or committed); `.env.example` lists every setting. Required: `PROJECT_ID`,
+  `PROJECT_SECRET` (Spectrum, `bun start` only), `EXA_API_KEY` (all job-hunt commands), `OPENROUTER_API_KEY` (radar
+  and research; with `OPENROUTER_BASE_URL` + `RESEARCH_MODEL` for Gemini or another OpenAI-compatible endpoint).
+  Optional: `HUNTER_API_KEY`, `REVIEWER_MODEL`, `OLLAMA_BASE_URL`, `SCOUT_MODEL`, `SCOUT_ROLES` / `SCOUT_SECTORS` /
+  `SCOUT_CITIES` / `SCOUT_WORK_MODE`, `RADAR_*`, `HIRING_DB`, `CONTACTS_DB`.
+- Runtime: `bun start` (Spectrum app), `bun run daily` (once a day, see `README.md` for the cron line), `bun test`,
+  `bunx tsc --noEmit`, `RUN_LIVE=1 bun test tests/live.test.ts` (opt-in, about 6 Exa requests).

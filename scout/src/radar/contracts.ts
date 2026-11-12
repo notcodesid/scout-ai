@@ -100,7 +100,8 @@ const names = (max: number) =>
 export const Round = z.object({
   company: z.string().trim().min(1).max(120),
   whatItDoes: optional(240),
-  stage: z.unknown().transform(normalizeStage),
+  // A round that leaves the stage out is an unknown-stage round, not a malformed one.
+  stage: z.unknown().optional().transform(normalizeStage),
   amount: optional(60),
   investors: names(8),
   founders: names(6),
@@ -118,6 +119,14 @@ export const Extraction = z.object({ rounds: z.array(z.unknown()).max(60) });
 export type FundedCompany = Omit<Round, "sourceId"> & { key: string; sourceUrl: string; sourceTitle: string; publishedDate: string | null };
 
 export const companyKey = (name: string) => name.toLowerCase().replace(/\b(pvt|private|ltd|limited|inc|technologies|labs)\b\.?/g, "").replace(/[^a-z0-9]/g, "");
+
+/** "Cosmoserve" and "Cosmoserve Space" are one company: the words of one name begin the other. */
+export function sameCompany(a: string, b: string) {
+  const words = (name: string) =>
+    name.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/\b(pvt|private|ltd|limited|inc|technologies|labs)\b\.?/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+  const [short, long] = [words(a), words(b)].sort((x, y) => x.length - y.length) as [string[], string[]];
+  return short.join("").length >= 4 && short.every((word, i) => word === long[i]);
+}
 
 const AMOUNT = /(?<![a-z])(us\$|\$|usd|rs\.?|inr|₹)?\s*(\d[\d,]*(?:\.\d+)?)\s*-?\s*(crores?|cr|lakhs?|lacs?|million|mn|mln|m|billion|bn|b|k|thousand)?(?![a-z0-9])/gi;
 
@@ -237,7 +246,8 @@ export function rejectRound(round: Round, articles: Article[], stages: Stage[], 
     if (usdMn > UNKNOWN_STAGE_MAX_USD_MN) return `stage unknown and amount too large (about $${Math.round(usdMn)}M)`;
   } else if (!stages.includes(stage)) return `stage ${stage} not wanted`;
 
-  const announced = Date.parse(round.announcedOn ?? article.publishedDate ?? "");
+  // A date the model gives counts only when the page writes it; otherwise the publish date stands in.
+  const announced = Date.parse(statedDate(round.announcedOn, article.text) ?? article.publishedDate ?? "");
   if (Number.isFinite(announced) && announced < since.getTime()) return "older than window";
   return null;
 }
@@ -249,4 +259,63 @@ export function statedOnly<T extends Pick<Round, "founders" | "website">>(fields
   const host = fields.website?.toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/^www\./, "").split(/[/?#\s]/)[0] ?? "";
   if (host.includes(".") && text.includes(host)) website = fields.website;
   return { ...fields, website, founders: fields.founders.filter((name) => text.includes(comparableQuote(name).toLowerCase())) };
+}
+
+const MONTHS = [
+  "jan(?:uary)?", "feb(?:ruary)?", "mar(?:ch)?", "apr(?:il)?", "may", "june?", "july?", "aug(?:ust)?", "sept?(?:ember)?", "oct(?:ober)?", "nov(?:ember)?", "dec(?:ember)?",
+];
+
+/**
+ * The model's date as YYYY-MM-DD, but only when the page itself writes that
+ * date ("5 Nov 2026", "November 5, 2026", "05 Nov'26", "2026-11-05",
+ * "05/11/2026"). A date the page never writes is a guess and becomes null.
+ */
+export function statedDate(value: string | null | undefined, pageText: string): string | null {
+  if (!value?.trim()) return null;
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/.exec(value.trim());
+  let y: number, m: number, d: number;
+  if (iso) [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  else {
+    const parsed = new Date(value);
+    if (!Number.isFinite(parsed.getTime())) return null;
+    [y, m, d] = [parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate()];
+  }
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const day = `(?<!\\d)0?${d}(?:st|nd|rd|th)?`;
+  const month = `(?<![a-z])(?:${MONTHS[m - 1]})(?![a-z])\\.?`;
+  const year = `(?:${y}|['’‘]\\s?${pad(y % 100)})(?!\\d)`;
+  const gap = "[\\s.,-]*";
+  const written = new RegExp([
+    `${day}${gap}(?:of\\s+)?${month}${gap}${year}`,
+    `${month}${gap}${day}${gap}${year}`,
+    `(?<!\\d)${y}[-/.]0?${m}[-/.]0?${d}(?!\\d)`,
+    `(?<!\\d)0?${d}[-/.]0?${m}[-/.]${y}(?!\\d)`,
+    `(?<!\\d)0?${m}[-/.]0?${d}[-/.]${y}(?!\\d)`,
+  ].join("|"), "i");
+  return written.test(pageText) ? `${y}-${pad(m)}-${pad(d)}` : null;
+}
+
+/**
+ * Two verified reports of the same company become one, and detail wins over
+ * brevity. The quote, source and stage come from the report that states the
+ * stage (on a tie, a single story beats a roundup, then the first stays);
+ * every other field takes whichever report states more.
+ */
+export function mergeCompanies(a: FundedCompany, b: FundedCompany): FundedCompany {
+  const rank = (c: FundedCompany) => (c.stage !== "unknown" ? 2 : 0) + (isRoundup({ title: c.sourceTitle }) ? 0 : 1);
+  const [main, extra] = rank(b) > rank(a) ? [b, a] : [a, b];
+  const longer = (x: string[], y: string[]) => (y.length > x.length ? y : x);
+  return {
+    ...main,
+    key: a.key,
+    whatItDoes: main.whatItDoes ?? extra.whatItDoes,
+    amount: main.amount ?? extra.amount,
+    investors: longer(main.investors, extra.investors),
+    founders: longer(main.founders, extra.founders),
+    sector: main.sector !== "other" ? main.sector : extra.sector,
+    announcedOn: main.announcedOn ?? extra.announcedOn,
+    city: main.city ?? extra.city,
+    website: main.website ?? extra.website,
+  };
 }
