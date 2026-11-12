@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { unlinkSync } from "node:fs";
 import { RadarStore, dedupeStories, runRadar, storySubject, type RadarProviders } from "../src/radar/radar.ts";
-import { RADAR_LIMITS, Round, amountUsdMn, companyKey, isRoundup, mergeCompanies, rejectRound, statedDate, type Article, type FundedCompany } from "../src/radar/contracts.ts";
+import { RADAR_LIMITS, Round, amountUsdMn, companyKey, isRoundup, mergeCompanies, rejectRound, sameCompany, statedDate, type Article, type FundedCompany } from "../src/radar/contracts.ts";
 
 const now = new Date("2026-11-12T00:00:00Z");
 const article: Article = {
@@ -339,6 +339,36 @@ test("a thin stored company gains facts on a later run without being reported as
   expect(store.all()[0]).toMatchObject({ stage: "series-a", sourceUrl: altmStory.url });
 });
 
+test("a longer form of a company's name is the same company, in a run and in the store (Cosmoserve Space)", async () => {
+  expect(sameCompany("Cosmoserve", "Cosmoserve Space")).toBe(true);
+  expect(sameCompany("Two Point O Capital (TW.O)", "Two Point O")).toBe(true);
+  expect(sameCompany("Kiln Labs Pvt Ltd", "kiln")).toBe(true);
+  expect(sameCompany("Cent", "Centmatiks")).toBe(false);
+  expect(sameCompany("Space Cosmoserve", "Cosmoserve")).toBe(false);
+  expect(sameCompany("Zed", "Zed Space")).toBe(false); // too short to be sure
+
+  const roundup: Article = { ...altmRoundup, text: "Cosmoserve raised $6 Mn from Rebright Partners. Peppermint raised Rs 100 crore from pi Ventures." };
+  const story = single("s-cos", "Cosmoserve Space raises $6 million", "Hyderabad-based Cosmoserve Space has raised $6 million in a seed funding round led by Rebright Partners. Founded by Chiranjeevi Phanindra.");
+  const late = single("s-pep", "Peppermint Robotics raises Rs 100 crore", "Peppermint Robotics raised Rs 100 crore in its Series B round.");
+  const r = (company: string, stage: string, quote: string, sourceId: string, extra = {}) => ({ ...kiln, company, stage, amount: null, city: null, quote, sourceId, ...extra });
+  const rounds = [
+    r("Cosmoserve", "unknown", "Cosmoserve raised $6 Mn from Rebright Partners", "r-1"),
+    r("Peppermint", "unknown", "Peppermint raised Rs 100 crore from pi Ventures", "r-1"),
+    r("Cosmoserve Space", "seed", "Cosmoserve Space has raised $6 million in a seed funding round led by Rebright Partners", "s-cos", { founders: ["Chiranjeevi Phanindra"], city: "Hyderabad" }),
+    r("Peppermint Robotics", "series-b", "Peppermint Robotics raised Rs 100 crore in its Series B round", "s-pep"),
+  ];
+  const store = new RadarStore(":memory:");
+  const result = await runRadar(byPage(rounds, [roundup, story, late]), store, { now, retryDelayMs: 0 });
+  expect(result.fresh.map((c) => [c.company, c.stage, c.founders, c.city])).toEqual([["Cosmoserve Space", "seed", ["Chiranjeevi Phanindra"], "Hyderabad"]]);
+  // The later stage stated under the longer name still drops the unknown-stage keep under the short one.
+  expect(result.rejected.at(-1)).toEqual({ company: "Peppermint", reason: "stage series-b not wanted (stated on another page)" });
+
+  // A later run that only sees the short name updates nothing and adds no second row.
+  const again = await runRadar(byPage([{ ...rounds[0]!, sourceId: "r-2" }], [{ ...roundup, id: "r-2", url: "https://other.example.com/weekly" }]), store, { now, retryDelayMs: 0 });
+  expect(again).toMatchObject({ fresh: [], updated: [] });
+  expect(store.all().map((c) => c.company)).toEqual(["Cosmoserve Space"]);
+});
+
 test("hard checks still hold when a roundup and a single story are merged", async () => {
   const roundup: Article = {
     ...altmRoundup,
@@ -417,7 +447,7 @@ test("keeps founders, website and sector, but only what the page states", async 
     ...article,
     text: "Kiln Labs raised $2 Mn in a seed round led by Fixture Ventures. Founded by Asha Rao and Vikram Sethi, the company (kilnlabs.in) builds tools for potters.",
   };
-  const round = { ...kiln, founders: ["Asha Rao", "Vikram Sethi", "Invented Person"], website: "https://www.kilnlabs.in/", sector: "consumer-brand" };
+  const round = { ...kiln, founders: ["Asha Rao", "Kiln Labs", "Vikram Sethi", "Invented Person"], website: "https://www.kilnlabs.in/", sector: "consumer-brand" };
   const result = await runRadar(providers([round], [page]), new RadarStore(":memory:"), { now, retryDelayMs: 0 });
   expect(result.fresh[0]).toMatchObject({ founders: ["Asha Rao", "Vikram Sethi"], website: "https://www.kilnlabs.in/", sector: "consumer-brand" });
 

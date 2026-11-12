@@ -97,3 +97,12 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
   `SCOUT_CITIES` / `SCOUT_WORK_MODE`, `RADAR_*`, `HIRING_DB`, `CONTACTS_DB`.
 - Runtime: `bun start` (Spectrum app), `bun run daily` (once a day, see `README.md` for the cron line), `bun test`,
   `bunx tsc --noEmit`, `RUN_LIVE=1 bun test tests/live.test.ts` (opt-in, about 6 Exa requests).
+
+## Radar follow-up (latest)
+
+- Facts are merged across articles and into stored rows (stated stage, founders, sector win over blanks);
+  confirmed live: a full 30-article run with 0 failures, and a rerun that skipped all 34 processed articles.
+- Known limits: a model-given stage is not verified against the page (Two Point O Capital flipped between
+  unknown and series-a across runs); founder names are only checked to appear on the page, so a reporter's
+  byline can slip in (seen: Dispatch Network); news pages rarely state a website, so the hiring check still
+  looks it up; the Peptris-style background-mention rejection is covered by tests only.

@@ -263,7 +263,10 @@ export async function runRadar(providers: RadarProviders, store: RadarStore, opt
         const article = batch.find((a) => a.id === round.sourceId)!;
         const { sourceId: _sourceId, ...fields } = statedOnly(round, article);
         const company: FundedCompany = {
-          ...fields, stage: settledStage(round, article), announcedOn: statedDate(round.announcedOn, article.text),
+          ...fields,
+          // The company's own name is on the page, but it is not a founder.
+          founders: fields.founders.filter((name) => !sameCompany(name, round.company)),
+          stage: settledStage(round, article), announcedOn: statedDate(round.announcedOn, article.text),
           key, sourceUrl: article.url, sourceTitle: article.title, publishedDate: article.publishedDate,
         };
         // A roundup row and a single story about one company are one round: keep the fuller facts of both.
@@ -297,7 +300,8 @@ export async function runRadar(providers: RadarProviders, store: RadarStore, opt
   result.companies = [...found.values()];
   const known = store.all();
   for (const company of result.companies) {
-    const stored = store.get(company.key) ?? known.find((k) => sameCompany(k.company, company.company)) ?? null;
+    const alias = known.find((k) => sameCompany(k.company, company.company))?.key;
+    const stored = store.get(company.key) ?? (alias ? store.get(alias) : null);
     if (stored) {
       // Known already: never reported as new again, but better facts replace a thin stored row.
       const merged = mergeCompanies(stored, company);
