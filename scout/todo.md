@@ -53,7 +53,11 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
         Greenhouse/Lever/Ashby JSON is read when the site links a board (or the domain label matches
         one with roles); Exa LinkedIn/X search collects hiring posts that name the company inside the
         window. Run live on 20 companies: 13 sites with hiring evidence, none on those three boards.
-  - [ ] Likes/engagement on posts and the poster's email are not collected yet
+  - [x] Contact finder (`bun run contacts [--limit 20] [--company "Name"] [--all]`), no model calls:
+        reads each company's hiring posts, careers page and site for published addresses (kept with
+        the page and surrounding words), names the people who posted, and offers clearly labelled
+        unverified guesses for affiliated posters. Run live on 12 companies.
+  - [ ] Guessed addresses are not verified (needs a verifier such as Hunter); post likes are not collected
   - [ ] Decide provider: CrustData if access survives the hackathon, else Exa search
   - [ ] Profile → 3–5 ranked candidates with one-line reasons → user picks
 - [ ] **Phase 4 — polish**

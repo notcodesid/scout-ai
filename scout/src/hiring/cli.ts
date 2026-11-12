@@ -1,6 +1,7 @@
 // Hiring check: `bun run hiring [--days 30] [--limit 20] [--company "Name"] [--all]`
 // For each company on the funding radar: find its site and careers page, read its
 // public job board, and collect recent hiring posts. Read-only; contacts no one.
+import { companyKey } from "../radar/contracts.ts";
 import { RadarStore } from "../radar/radar.ts";
 import { HiringStore, checkHiring, hiringScore, type Target } from "./check.ts";
 import { liveHiringProviders } from "./providers.ts";
@@ -32,7 +33,10 @@ if (args.includes("--all")) {
 } else {
   const radar = new RadarStore();
   const only = value("--company");
-  const targets: Target[] = only ? [{ company: only }] : radar.all().slice(0, limit);
+  // A named company reuses its radar entry when there is one, so the website lookup keeps its hints.
+  const targets: Target[] = only
+    ? [radar.all().find((c) => c.key === companyKey(only)) ?? { company: only }]
+    : radar.all().slice(0, limit);
   radar.close();
   if (!targets.length) console.log("No companies on the radar yet. Run `bun run radar` first, or pass --company.");
   const providers = liveHiringProviders();
