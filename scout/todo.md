@@ -48,7 +48,12 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
         Run live end to end (Exa + Gemini through its OpenAI-compatible endpoint):
         31 articles, 12 verified rounds; remaining calls hit the Gemini free quota (429).
         Raise coverage with RADAR_MAX_ARTICLES / RADAR_ARTICLE_CHARS.
-  - [ ] Per funded company: check its job board (Greenhouse/Lever/Ashby) and founder "we're hiring" posts
+  - [x] Hiring check (`bun run hiring [--days 30] [--limit 20] [--company "Name"] [--all]`), no model calls:
+        per radar company, Exa finds the website, careers page and third-party listings; public
+        Greenhouse/Lever/Ashby JSON is read when the site links a board (or the domain label matches
+        one with roles); Exa LinkedIn/X search collects hiring posts that name the company inside the
+        window. Run live on 20 companies: 13 sites with hiring evidence, none on those three boards.
+  - [ ] Likes/engagement on posts and the poster's email are not collected yet
   - [ ] Decide provider: CrustData if access survives the hackathon, else Exa search
   - [ ] Profile → 3–5 ranked candidates with one-line reasons → user picks
 - [ ] **Phase 4 — polish**
