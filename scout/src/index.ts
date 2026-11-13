@@ -3,6 +3,8 @@ import { imessage } from "@spectrum-ts/imessage";
 import { acceptProposal, freshChat, nextAsk, spokenText } from "./interview.ts";
 import { propose } from "./model.ts";
 import { openStore } from "./store.ts";
+import { digestReply } from "./daily/command.ts";
+import { readStoredDigest } from "./daily/pipeline.ts";
 
 const store = openStore();
 const started = Date.now();
@@ -56,6 +58,13 @@ for await (const [space, message] of app.messages) {
     void space.responding(async () => {
       if (generation.get(space.id) !== turn) return;
       const current = store.load(space.id);
+      // "radar" / "jobs" / "who's hiring": text back the stored digest. Read-only; the interview is left as it was.
+      const digest = digestReply(said, () => readStoredDigest(current.chat.status === "locked" ? current.chat.draft : null));
+      if (digest) {
+        for (const part of digest) await space.send(part);
+        console.log("out digest");
+        return;
+      }
       const reply = await answer(current.chat, said);
       if (generation.get(space.id) !== turn) return;
       store.save(space.id, { chat: reply.chat, seen: current.seen });

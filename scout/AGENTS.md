@@ -1,6 +1,6 @@
 # scout — agent instructions
 
-This is a [Spectrum](https://photon.codes/docs/spectrum-ts) app, pinned to `spectrum-ts@^12.10.1`. The entry point is `src/index.ts`, which configures the imessage provider(s) and runs the echo loop.
+This is a [Spectrum](https://photon.codes/docs/spectrum-ts) app, pinned to `spectrum-ts@^12.10.1`. The entry point is `src/index.ts`, which configures the imessage provider(s) and runs the interview agent; the texts "radar", "jobs", "digest" and "who's hiring" are answered with the stored daily digest (`src/daily/command.ts`). The job-hunt commands (`bun run radar`, `hiring`, `contacts`, `daily`) are separate CLIs; see `README.md`. Check work with `bun test` and `bunx tsc --noEmit`.
 
 ## Working in this project
 

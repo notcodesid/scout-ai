@@ -14,6 +14,7 @@ export interface Providers {
     tools?: OpenAI.ChatCompletionTool[],
     submitOnly?: boolean,
     purpose?: ModelPurpose,
+    maxTokens?: number,
   ): Promise<{ message: OpenAI.ChatCompletionMessage; tokens: number; costDollars: number | null }>;
   read(url: string): Promise<Retrieval>;
   search(query: string, objective: string): Promise<Retrieval>;
@@ -36,9 +37,12 @@ export function liveProviders(): Providers {
     review: process.env.REVIEWER_MODEL || DEFAULT_MODELS.review,
   };
   let lastCost: number | null = null;
+  const baseURL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+  // Other OpenAI-compatible endpoints (Gemini, for one) reject OpenRouter's extensions.
+  const openRouter = new URL(baseURL).hostname.endsWith("openrouter.ai");
   const client = new OpenAI({
     apiKey: process.env.OPENROUTER_API_KEY,
-    baseURL: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    baseURL,
     maxRetries: 0,
     timeout: 45000,
     defaultHeaders: { "X-Title": "scout" },
@@ -66,14 +70,14 @@ export function liveProviders(): Providers {
     failures: response.failures?.length ?? 0,
   });
   return {
-    async model(messages, tools, submitOnly, purpose = "research") {
+    async model(messages, tools, submitOnly, purpose = "research", maxTokens = LIMITS.maxTokensPerCall) {
       lastCost = null;
       // `usage.include` is an OpenRouter extension: ask it to report actual cost.
       const params = {
         model: models[purpose],
         messages,
-        max_tokens: LIMITS.maxTokensPerCall,
-        usage: { include: true },
+        max_tokens: maxTokens,
+        ...(openRouter ? { usage: { include: true } } : {}),
         ...(tools
           ? { tools, tool_choice: submitOnly ? { type: "function", function: { name: "submit_dossier" } } : "required", parallel_tool_calls: false }
           : { response_format: { type: "json_object" } }),
