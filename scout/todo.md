@@ -106,3 +106,12 @@ and texts back dossiers and outreach drafts. Nothing is ever sent to employers.
   unknown and series-a across runs); founder names are only checked to appear on the page, so a reporter's
   byline can slip in (seen: Dispatch Network); news pages rarely state a website, so the hiring check still
   looks it up; the Peptris-style background-mention rejection is covered by tests only.
+
+## X hiring leads (latest)
+
+- `bun run xleads` run live: 60 searches over 7 days returned 856 tweets and about 20 leads after filtering.
+  Timestamps are exact and like counts are on every tweet, so "under a day old, under 100 likes" is measurable on X.
+- Known limits: filtering is by wording, so some leads are off-target and some real ones are dropped (an India
+  signal is required in the text, bio or location); company names come from "at X" / "@handle" patterns and are
+  often missing; twitterapi.io rate-limits small plans (HTTP 429), so calls are spaced 5.5s apart.
+- Not yet joined to the funding radar (no check that the poster's company recently raised).

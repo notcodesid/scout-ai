@@ -10,6 +10,7 @@
     "hiring": "bun src/hiring/cli.ts",
     "contacts": "bun src/hiring/contacts-cli.ts",
     "daily": "bun src/daily/cli.ts",
+    "xleads": "bun src/x/cli.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },

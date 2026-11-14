@@ -169,3 +169,16 @@ verified live and the known limits.
 - None of about 20 Indian startups checked used Greenhouse, Lever or Ashby, so open roles mostly come from posts and careers pages.
 - Guessed addresses are off by default. Hunter verification is implemented but has never been run against the live service.
 - Companies stored by early radar runs have no sector or founders recorded; they show as sector `other`.
+
+## X hiring leads
+
+`bun run xleads [--hours 72] [--pages 5] [--from tweets.json ...] [--all]`
+
+Searches X (through twitterapi.io, `TWITTERAPI_KEY`) for recent hiring posts and keeps the ones that look like an
+opening at an Indian startup: the poster's own opening ("we're hiring", "I am hiring", "Hiring: X") or a named
+opening passed along ("Acme is hiring a ..."), with a role, an India signal, a startup signal, and under 100 likes.
+Job boards, recruiters, job seekers, large employers, non-startup roles and accounts that pass on three or more
+openings are dropped, each with a counted reason. Each lead shows who posted (founder, team, or shared), the role,
+age in hours, likes and views, and how the post says to apply (email, DM, link). Leads are stored, so a rerun
+reports only new ones; raw tweets are saved to `xleads-raw.json` so the filter can be re-run with `--from` at no
+API cost. Read-only: it never replies, follows or messages anyone.
